@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FAQ Architect | Business FAQ Generator & Validator</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏗️</text></svg>">
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script type="importmap">
+    {
+      "imports": {
+        "@google/genai": "https://esm.run/@google/genai"
+      }
+    }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+        
+        :root {
+            --font-sans: 'Inter', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        body {
+            font-family: var(--font-sans);
+            background-color: #f8fafc;
+            color: #1e293b;
+        }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(226, 232, 240, 0.8);
+        }
+
+        .mono {
+            font-family: var(--font-mono);
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+
+        .step-indicator {
+            transition: all 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import { GoogleGenAI } from "@google/genai";
+
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        // --- Icon Component (Safe for React) ---
+        const Icon = ({ name, className = "w-5 h-5" }) => {
+            const ref = useRef(null);
+            useEffect(() => {
+                if (window.lucide && ref.current) {
+                    // Create a fresh icon element inside the span
+                    // React only manages the span, Lucide manages the content
+                    ref.current.innerHTML = `<i data-lucide="${name}" class="${className}"></i>`;
+                    window.lucide.createIcons({
+                        root: ref.current
+                    });
+                }
+            }, [name, className]);
+
+            return <span ref={ref} className="inline-flex shrink-0 items-center justify-center"></span>;
+        };
+
+        // --- Error Boundary ---
+        class ErrorBoundary extends React.Component {
+            constructor(props) {
+                super(props);
+                this.state = { hasError: false, error: null };
+            }
+            static getDerivedStateFromError(error) {
+                return { hasError: true, error };
+            }
+            componentDidCatch(error, errorInfo) {
+                console.error("ErrorBoundary caught an error", error, errorInfo);
+            }
+            render() {
+                if (this.state.hasError) {
+                    return (
+                        <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+                            <div className="glass-card p-8 rounded-2xl max-w-md w-full text-center space-y-4">
+                                <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto">
+                                    <Icon name="alert-octagon" className="w-8 h-8" />
+                                </div>
+                                <h1 className="text-xl font-bold">Something went wrong</h1>
+                                <p className="text-slate-500 text-sm">The application encountered an unexpected error. Please try refreshing the page.</p>
+                                <button 
+                                    onClick={() => window.location.reload()}
+                                    className="w-full py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors"
+                                >
+                                    Refresh Page
+                                </button>
+                                {this.state.error && (
+                                    <pre className="text-[10px] text-left bg-slate-100 p-3 rounded overflow-auto max-h-32 text-slate-400">
+                                        {this.state.error.toString()}
+                                    </pre>
+                                )}
+                            </div>
+                        </div>
+                    );
+                }
+                return this.props.children;
+            }
+        }
+
+        // --- Constants & Templates ---
+        const TEMPLATES = {
+            dentist: {
+                name: "Bright Smile Dental",
+                industry: "Dentistry",
+                audience: "Local families and professionals",
+                location: "Downtown Metro Area",
+                tone: "Professional yet warm and reassuring",
+                products: "General dentistry, teeth whitening, implants, emergency care",
+                notes: "Focus on pain-free technology and 20 years of experience",
+                faqs: [
+                    { q: "How often should I visit the dentist for a check-up?", a: "We recommend a professional cleaning and examination every six months to maintain optimal oral health and catch potential issues early." },
+                    { q: "Do you offer emergency dental appointments?", a: "Yes, we prioritize emergency cases and often provide same-day appointments for patients experiencing severe pain or dental trauma." },
+                    { q: "Is teeth whitening safe for my enamel?", a: "Our professional whitening treatments are clinically proven to be safe and effective, using specialized formulas that protect your enamel while lifting stains." },
+                    { q: "What should I do if I have dental anxiety?", a: "We offer several comfort options, including gentle sedation techniques and a calming environment, to ensure a stress-free experience for our patients." },
+                    { q: "Do you accept most major insurance plans?", a: "We work with a wide range of insurance providers and our administrative team will help you maximize your benefits and understand your coverage." }
+                ]
+            },
+            lawyer: {
+                name: "Justice & Associates",
+                industry: "Legal Services",
+                audience: "Small business owners and individuals",
+                location: "Statewide",
+                tone: "Authoritative, clear, and trustworthy",
+                products: "Contract law, litigation, estate planning",
+                notes: "Specializing in proactive legal protection for entrepreneurs",
+                faqs: [
+                    { q: "What should I bring to my initial consultation?", a: "Please bring any relevant documents, correspondence, or contracts related to your case to help us provide the most accurate assessment." },
+                    { q: "How are your legal fees structured?", a: "We offer transparent billing options, including hourly rates, flat fees for specific services, and contingency arrangements depending on the nature of your case." },
+                    { q: "How long does a typical legal matter take to resolve?", a: "Timelines vary significantly based on complexity and court schedules, but we provide regular updates and strive for the most efficient resolution possible." },
+                    { q: "Will I always work with the same attorney?", a: "You will have a lead attorney assigned to your case, supported by a dedicated team to ensure consistent communication and expertise." },
+                    { q: "Can you help with out-of-state legal issues?", a: "While we are licensed in this state, we can often coordinate with associate counsel in other jurisdictions or provide guidance on multi-state matters." }
+                ]
+            },
+            plumber: {
+                name: "Flow-Rite Plumbing",
+                industry: "Home Services",
+                audience: "Homeowners and property managers",
+                location: "Greater Tri-City Area",
+                tone: "Practical, honest, and helpful",
+                products: "Leak repair, water heater installation, drain cleaning",
+                notes: "Available 24/7 with no hidden dispatch fees",
+                faqs: [
+                    { q: "What should I do if a pipe bursts in my home?", a: "Immediately turn off your main water valve to prevent further damage and call our 24/7 emergency line for rapid dispatch." },
+                    { q: "How can I prevent my drains from clogging?", a: "Avoid pouring grease down the sink, use drain guards to catch hair, and schedule an annual professional drain cleaning to clear buildup." },
+                    { q: "Is it better to repair or replace an old water heater?", a: "If your unit is over 10 years old or requires frequent repairs, a modern energy-efficient replacement is often more cost-effective in the long run." },
+                    { q: "Do you provide written estimates before starting work?", a: "Yes, we provide clear, upfront pricing and a detailed written estimate for your approval before any work begins." },
+                    { q: "Are your plumbers licensed and insured?", a: "Every member of our team is fully licensed, background-checked, and covered by comprehensive liability insurance for your peace of mind." }
+                ]
+            },
+            restaurant: {
+                name: "The Hearth Kitchen",
+                industry: "Hospitality",
+                audience: "Foodies and local families",
+                location: "Westside Arts District",
+                tone: "Inviting, passionate, and descriptive",
+                products: "Farm-to-table Italian cuisine, craft cocktails",
+                notes: "All pasta is handmade daily using local organic flour",
+                faqs: [
+                    { q: "Do you accept reservations for small groups?", a: "We accept reservations for parties of all sizes through our website or by phone, and we highly recommend booking in advance for weekends." },
+                    { q: "Can you accommodate specific dietary restrictions?", a: "Our menu includes several gluten-free and vegan options, and our chefs are happy to adapt many dishes to meet your specific dietary needs." },
+                    { q: "Is there parking available near the restaurant?", a: "There is ample street parking available on Westside Avenue, and we offer complimentary valet service during dinner hours on Friday and Saturday." },
+                    { q: "Do you offer a children's menu?", a: "Yes, we have a curated selection of kid-friendly Italian favorites made with the same high-quality ingredients as our main menu." },
+                    { q: "Are you available for private events or buyouts?", a: "We offer several private dining options for groups of 10 to 50 guests, including custom menus tailored to your celebration." }
+                ]
+            }
+        };
+
+        // --- Helper Components ---
+        const Button = ({ children, onClick, variant = "primary", className = "", disabled = false, loading = false }) => {
+            const variants = {
+                primary: "bg-blue-600 text-white hover:bg-blue-700 shadow-sm",
+                secondary: "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50",
+                ghost: "text-slate-600 hover:bg-slate-100",
+                danger: "bg-red-50 text-red-600 border border-red-100 hover:bg-red-100"
+            };
+            return (
+                <button 
+                    onClick={onClick} 
+                    disabled={disabled || loading}
+                    className={`px-4 py-2 rounded-lg font-medium transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${variants[variant]} ${className}`}
+                >
+                    {loading ? <Icon name="loader-2" className="animate-spin w-4 h-4" /> : children}
+                </button>
+            );
+        };
+
+        const Input = ({ label, value, onChange, placeholder, type = "text", multiline = false }) => (
+            <div className="space-y-1.5">
+                {label && <label className="text-sm font-semibold text-slate-700">{label}</label>}
+                {multiline ? (
+                    <textarea 
+                        value={value} 
+                        onChange={(e) => onChange(e.target.value)}
+                        placeholder={placeholder}
+                        rows={3}
+                        className="w-full px-3 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all resize-none text-sm"
+                    />
+                ) : (
+                    <input 
+                        type={type}
+                        value={value} 
+                        onChange={(e) => onChange(e.target.value)}
+                        placeholder={placeholder}
+                        className="w-full px-3 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-sm"
+                    />
+                )}
+            </div>
+        );
+
+        // --- Main App Component ---
+        function App() {
+            const [step, setStep] = useState(1);
+            const [context, setContext] = useState({
+                name: "",
+                industry: "",
+                audience: "",
+                location: "",
+                tone: "",
+                products: "",
+                notes: ""
+            });
+            const [faqs, setFaqs] = useState([{ q: "", a: "" }]);
+            const [isGenerating, setIsGenerating] = useState(false);
+            const [assistantAction, setAssistantAction] = useState(null);
+            const [activeFaqIndex, setActiveFaqIndex] = useState(null);
+            const [notification, setNotification] = useState(null);
+            const faqListEndRef = useRef(null);
+
+            // Scroll to top on step change
+            useEffect(() => {
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            }, [step]);
+
+            // Scroll to bottom when a new FAQ is added
+            useEffect(() => {
+                if (step === 2 && faqListEndRef.current) {
+                    faqListEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                }
+            }, [faqs.length]);
+
+            const showNotification = (msg, type = "error") => {
+                setNotification({ msg, type });
+                setTimeout(() => setNotification(null), 5000);
+            };
+
+            // AI Assistant Logic
+            const runAssistant = async (action, index = null) => {
+                if (!process.env.GEMINI_API_KEY) {
+                    showNotification("Gemini API key is required for assistant features.");
+                    return;
+                }
+
+                setIsGenerating(true);
+                setAssistantAction(action);
+                setActiveFaqIndex(index);
+                
+                try {
+                    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+                    let prompt = "";
+                    if (action === "generate") {
+                        prompt = `Act as an SEO expert. Based on this business context:
+                        Name: ${context.name}
+                        Industry: ${context.industry}
+                        Audience: ${context.audience}
+                        Location: ${context.location}
+                        Tone: ${context.tone}
+                        Products: ${context.products}
+                        Notes: ${context.notes}
+
+                        Generate 8-10 high-quality FAQ questions and answers. 
+                        Follow Google's FAQPage guidelines: factual, direct, non-promotional, and one answer per question.
+                        Return ONLY a JSON array of objects with "q" and "a" keys.`;
+                    } else if (["rewrite", "shorten", "expand", "conversational", "professional", "clean"].includes(action)) {
+                        const targetFaq = faqs[index];
+                        const instructions = {
+                            rewrite: "Rewrite for clarity and better flow.",
+                            shorten: "Make this answer significantly more concise while keeping the core facts.",
+                            expand: "Add helpful detail and context to this answer without being fluffy.",
+                            conversational: "Make this sound more friendly and approachable.",
+                            professional: "Make this sound more authoritative and formal.",
+                            clean: "Remove all promotional language, marketing fluff, and sales-y adjectives. Keep it strictly factual."
+                        };
+                        prompt = `Act as a professional editor. ${instructions[action]}
+                        Question: ${targetFaq.q}
+                        Current Answer: ${targetFaq.a}
+                        
+                        Return ONLY the improved answer text. No preamble.`;
+                    }
+
+                    const response = await ai.models.generateContent({
+                        model: "gemini-3-flash-preview",
+                        contents: prompt,
+                    });
+                    
+                    const responseText = response.text;
+                    if (!responseText) {
+                        throw new Error("The AI returned an empty response.");
+                    }
+
+                    if (action === "generate") {
+                        try {
+                            const cleanedJson = responseText.replace(/```json|```/g, "").trim();
+                            const newFaqs = JSON.parse(cleanedJson);
+                            
+                            // Validate shape
+                            if (!Array.isArray(newFaqs)) throw new Error("Response is not an array.");
+                            const validatedFaqs = newFaqs.map(f => ({
+                                q: String(f.q || f.question || ""),
+                                a: String(f.a || f.answer || "")
+                            })).filter(f => f.q || f.a);
+
+                            if (validatedFaqs.length === 0) throw new Error("No valid FAQs found in AI response.");
+
+                            setFaqs(validatedFaqs);
+                            setStep(2);
+                        } catch (e) {
+                            console.error("Failed to parse AI response", e);
+                            showNotification("Assistant failed to generate valid JSON. Please try again.");
+                        }
+                    } else {
+                        const updatedFaqs = [...faqs];
+                        updatedFaqs[index].a = responseText.trim();
+                        setFaqs(updatedFaqs);
+                    }
+                } catch (error) {
+                    console.error("AI Error:", error);
+                    showNotification("Assistant error. Please check your API key or connection.");
+                } finally {
+                    setIsGenerating(false);
+                    setAssistantAction(null);
+                    setActiveFaqIndex(null);
+                }
+            };
+
+            const applyTemplate = (key) => {
+                const t = TEMPLATES[key];
+                setContext({
+                    name: t.name,
+                    industry: t.industry,
+                    audience: t.audience,
+                    location: t.location,
+                    tone: t.tone,
+                    products: t.products,
+                    notes: t.notes
+                });
+                setFaqs(t.faqs);
+                setStep(2);
+            };
+
+            const addFaq = () => {
+                if (faqs.length < 20) {
+                    setFaqs([...faqs, { q: "", a: "" }]);
+                }
+            };
+
+            const removeFaq = (index) => {
+                if (faqs.length > 1) {
+                    setFaqs(faqs.filter((_, i) => i !== index));
+                }
+            };
+
+            const updateFaq = (index, field, value) => {
+                const updated = [...faqs];
+                updated[index][field] = value;
+                setFaqs(updated);
+            };
+
+            const moveFaq = (index, direction) => {
+                if ((direction === -1 && index === 0) || (direction === 1 && index === faqs.length - 1)) return;
+                const updated = [...faqs];
+                const temp = updated[index];
+                updated[index] = updated[index + direction];
+                updated[index + direction] = temp;
+                setFaqs(updated);
+            };
+
+            // --- Validation Logic ---
+            const validations = useMemo(() => {
+                const results = [];
+                const promotionalWords = ["best", "cheapest", "amazing", "buy now", "limited time", "guaranteed", "sale", "discount"];
+                const multiAnswerWords = ["alternatively", "another option", "choice of", "multiple answers"];
+
+                if (faqs.length < 5) results.push({ type: "warn", msg: "Google recommends at least 5 FAQs for a robust FAQ section." });
+                
+                faqs.forEach((faq, i) => {
+                    if (!faq.q || !faq.a) return;
+                    
+                    // Promotional check
+                    const hasPromo = promotionalWords.some(word => faq.a.toLowerCase().includes(word));
+                    if (hasPromo) results.push({ type: "warn", msg: `FAQ #${i+1} contains potentially promotional language. Keep answers factual.` });
+
+                    // Multi-answer check (Heuristic)
+                    const hasMulti = multiAnswerWords.some(word => faq.a.toLowerCase().includes(` ${word} `));
+                    if (hasMulti) results.push({ type: "warn", msg: `FAQ #${i+1} might suggest multiple answers. FAQPage requires a single accepted answer.` });
+
+                    // Length check
+                    if (faq.a.length > 500) results.push({ type: "warn", msg: `FAQ #${i+1} is quite long. Concise answers perform better in search snippets.` });
+                });
+
+                // Duplicate check
+                const questions = faqs.map(f => f.q.toLowerCase().trim()).filter(q => q);
+                const uniqueQuestions = new Set(questions);
+                if (uniqueQuestions.size < questions.length) {
+                    results.push({ type: "error", msg: "Detected duplicate or highly similar questions. Each FAQ should be unique." });
+                }
+
+                return results;
+            }, [faqs]);
+
+            // --- Export Logic ---
+            const generateHtml = () => {
+                const items = faqs.filter(f => f.q && f.a).map(faq => `
+    <div class="faq-item">
+        <h3>${faq.q.replace(/</g, "&lt;")}</h3>
+        <p>${faq.a.replace(/</g, "&lt;")}</p>
+    </div>`).join("");
+
+                return `<section class="faq-section">
+    <h2>Frequently Asked Questions</h2>
+    ${items}
+</section>`;
+            };
+
+            const generateJsonLd = () => {
+                const schema = {
+                    "@context": "https://schema.org",
+                    "@type": "FAQPage",
+                    "mainEntity": faqs.filter(f => f.q && f.a).map(faq => ({
+                        "@type": "Question",
+                        "name": faq.q,
+                        "acceptedAnswer": {
+                            "@type": "Answer",
+                            "text": faq.a
+                        }
+                    }))
+                };
+                return `<script type="application/ld+json">\n${JSON.stringify(schema, null, 2)}\n<\/script>`;
+            };
+
+            const copyToClipboard = (text) => {
+                navigator.clipboard.writeText(text);
+                alert("Copied to clipboard!");
+            };
+
+            const downloadFile = (content, filename, type) => {
+                const blob = new Blob([content], { type });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = filename;
+                a.click();
+                URL.revokeObjectURL(url);
+            };
+
+            return (
+                <ErrorBoundary>
+                    <div className="min-h-screen flex flex-col">
+                        {/* Notification Toast */}
+                        {notification && (
+                            <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[100] animate-in slide-in-from-top-4 duration-300">
+                                <div className={`px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border ${notification.type === 'error' ? 'bg-red-50 border-red-100 text-red-700' : 'bg-blue-50 border-blue-100 text-blue-700'}`}>
+                                    <Icon name={notification.type === 'error' ? 'alert-circle' : 'info'} className="w-5 h-5" />
+                                    <span className="text-sm font-semibold">{notification.msg}</span>
+                                    <button onClick={() => setNotification(null)} className="ml-2 p-1 hover:bg-black/5 rounded-full"><Icon name="x" className="w-4 h-4" /></button>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Header */}
+                    <header className="glass-card sticky top-0 z-50 px-6 py-4 border-b">
+                        <div className="max-w-6xl mx-auto flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-blue-600 rounded-xl shadow-lg shadow-blue-200">
+                                    <Icon name="layout" className="text-white w-6 h-6" />
+                                </div>
+                                <div>
+                                    <h1 className="text-xl font-bold tracking-tight">FAQ Architect</h1>
+                                    <p className="text-xs text-slate-500 font-medium">Google FAQPage Schema Builder</p>
+                                </div>
+                            </div>
+                            <div className="hidden md:flex items-center gap-8">
+                                {[1, 2, 3, 4].map(i => (
+                                    <div key={i} className="flex items-center gap-2">
+                                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold step-indicator ${step === i ? 'bg-blue-600 text-white ring-4 ring-blue-100' : step > i ? 'bg-green-500 text-white' : 'bg-slate-200 text-slate-500'}`}>
+                                            {step > i ? <Icon name="check" className="w-3 h-3" /> : i}
+                                        </div>
+                                        <span className={`text-sm font-semibold ${step === i ? 'text-blue-600' : 'text-slate-400'}`}>
+                                            {["Context", "Editor", "Validate", "Export"][i-1]}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </header>
+
+                    <main className="flex-1 max-w-6xl w-full mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+                        
+                        {/* Left Column: Input/Editor */}
+                        <div className="lg:col-span-8 space-y-6">
+                            
+                            {/* Step 1: Business Context */}
+                            {step === 1 && (
+                                <div className="glass-card rounded-2xl p-8 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <h2 className="text-2xl font-bold">Business Context</h2>
+                                            <p className="text-slate-500 text-sm mt-1">Tell us about the business to generate better FAQ ideas.</p>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <Button variant="ghost" onClick={() => applyTemplate('dentist')} className="text-xs">Dentist</Button>
+                                            <Button variant="ghost" onClick={() => applyTemplate('lawyer')} className="text-xs">Lawyer</Button>
+                                            <Button variant="ghost" onClick={() => applyTemplate('plumber')} className="text-xs">Plumber</Button>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        <Input label="Business Name" value={context.name} onChange={(v) => setContext({...context, name: v})} placeholder="e.g. Acme Services" />
+                                        <Input label="Industry" value={context.industry} onChange={(v) => setContext({...context, industry: v})} placeholder="e.g. SaaS, Local HVAC" />
+                                        <Input label="Target Audience" value={context.audience} onChange={(v) => setContext({...context, audience: v})} placeholder="e.g. Small business owners" />
+                                        <Input label="Location / Service Area" value={context.location} onChange={(v) => setContext({...context, location: v})} placeholder="e.g. Chicago, IL" />
+                                        <Input label="Tone of Voice" value={context.tone} onChange={(v) => setContext({...context, tone: v})} placeholder="e.g. Professional, Friendly" />
+                                        <Input label="Products / Services" value={context.products} onChange={(v) => setContext({...context, products: v})} placeholder="What do you sell?" />
+                                    </div>
+                                    <Input label="Notes / Differentiators" multiline value={context.notes} onChange={(v) => setContext({...context, notes: v})} placeholder="What makes you special?" />
+
+                                    <div className="pt-4 flex justify-between items-center">
+                                        <p className="text-xs text-slate-400 max-w-xs italic">
+                                            Pro tip: Detailed context leads to much more accurate FAQ suggestions.
+                                        </p>
+                                        <div className="flex gap-3">
+                                            <Button variant="secondary" onClick={() => setStep(2)}>Skip to Editor</Button>
+                                            <Button onClick={() => runAssistant("generate")} loading={isGenerating && assistantAction === "generate"}>
+                                                <Icon name="sparkles" className="w-4 h-4" />
+                                                Generate FAQ Ideas
+                                            </Button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Step 2: FAQ Editor */}
+                            {step === 2 && (
+                                <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <div>
+                                            <h2 className="text-2xl font-bold">FAQ Editor</h2>
+                                            <p className="text-slate-500 text-sm">Draft 5 to 20 unique questions and answers.</p>
+                                        </div>
+                                        <Button variant="secondary" onClick={addFaq} disabled={faqs.length >= 20}>
+                                            <Icon name="plus" className="w-4 h-4" />
+                                            Add FAQ
+                                        </Button>
+                                    </div>
+
+                                    <div className="space-y-4">
+                                        {faqs.map((faq, index) => (
+                                            <div key={index} className="glass-card rounded-xl p-5 border-l-4 border-l-blue-500 group relative">
+                                                <div className="flex items-start gap-4">
+                                                    <div className="flex flex-col gap-1 pt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <button onClick={() => moveFaq(index, -1)} className="p-1 hover:bg-slate-100 rounded"><Icon name="chevron-up" className="w-4 h-4" /></button>
+                                                        <button onClick={() => moveFaq(index, 1)} className="p-1 hover:bg-slate-100 rounded"><Icon name="chevron-down" className="w-4 h-4" /></button>
+                                                    </div>
+                                                    <div className="flex-1 space-y-4">
+                                                        <input 
+                                                            value={faq.q} 
+                                                            onChange={(e) => updateFaq(index, 'q', e.target.value)}
+                                                            placeholder="Enter the question..."
+                                                            className="w-full text-lg font-bold bg-transparent border-none outline-none placeholder:text-slate-300"
+                                                        />
+                                                        <textarea 
+                                                            value={faq.a} 
+                                                            onChange={(e) => updateFaq(index, 'a', e.target.value)}
+                                                            placeholder="Enter the answer..."
+                                                            rows={2}
+                                                            className="w-full text-slate-600 bg-transparent border-none outline-none resize-none placeholder:text-slate-300 text-sm leading-relaxed"
+                                                        />
+                                                        
+                                                        {/* Assistant Tools for Item */}
+                                                        <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100">
+                                                            <button 
+                                                                onClick={() => runAssistant("rewrite", index)}
+                                                                disabled={isGenerating}
+                                                                className={`text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 transition-colors ${isGenerating && assistantAction === "rewrite" && activeFaqIndex === index ? 'text-blue-600' : 'text-slate-400 hover:text-blue-600'}`}
+                                                            >
+                                                                <Icon name={isGenerating && assistantAction === "rewrite" && activeFaqIndex === index ? "loader-2" : "refresh-cw"} className={`w-3 h-3 ${isGenerating && assistantAction === "rewrite" && activeFaqIndex === index ? 'animate-spin' : ''}`} /> Rewrite
+                                                            </button>
+                                                            <button 
+                                                                onClick={() => runAssistant("shorten", index)}
+                                                                disabled={isGenerating}
+                                                                className={`text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 transition-colors ${isGenerating && assistantAction === "shorten" && activeFaqIndex === index ? 'text-blue-600' : 'text-slate-400 hover:text-blue-600'}`}
+                                                            >
+                                                                <Icon name={isGenerating && assistantAction === "shorten" && activeFaqIndex === index ? "loader-2" : "scissors"} className={`w-3 h-3 ${isGenerating && assistantAction === "shorten" && activeFaqIndex === index ? 'animate-spin' : ''}`} /> Shorten
+                                                            </button>
+                                                            <button 
+                                                                onClick={() => runAssistant("expand", index)}
+                                                                disabled={isGenerating}
+                                                                className={`text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 transition-colors ${isGenerating && assistantAction === "expand" && activeFaqIndex === index ? 'text-blue-600' : 'text-slate-400 hover:text-blue-600'}`}
+                                                            >
+                                                                <Icon name={isGenerating && assistantAction === "expand" && activeFaqIndex === index ? "loader-2" : "maximize-2"} className={`w-3 h-3 ${isGenerating && assistantAction === "expand" && activeFaqIndex === index ? 'animate-spin' : ''}`} /> Expand
+                                                            </button>
+                                                            <button 
+                                                                onClick={() => runAssistant("conversational", index)}
+                                                                disabled={isGenerating}
+                                                                className={`text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 transition-colors ${isGenerating && assistantAction === "conversational" && activeFaqIndex === index ? 'text-blue-600' : 'text-slate-400 hover:text-blue-600'}`}
+                                                            >
+                                                                <Icon name={isGenerating && assistantAction === "conversational" && activeFaqIndex === index ? "loader-2" : "message-circle"} className={`w-3 h-3 ${isGenerating && assistantAction === "conversational" && activeFaqIndex === index ? 'animate-spin' : ''}`} /> Conversational
+                                                            </button>
+                                                            <button 
+                                                                onClick={() => runAssistant("professional", index)}
+                                                                disabled={isGenerating}
+                                                                className={`text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 transition-colors ${isGenerating && assistantAction === "professional" && activeFaqIndex === index ? 'text-blue-600' : 'text-slate-400 hover:text-blue-600'}`}
+                                                            >
+                                                                <Icon name={isGenerating && assistantAction === "professional" && activeFaqIndex === index ? "loader-2" : "shield-check"} className={`w-3 h-3 ${isGenerating && assistantAction === "professional" && activeFaqIndex === index ? 'animate-spin' : ''}`} /> Professional
+                                                            </button>
+                                                            <button 
+                                                                onClick={() => runAssistant("clean", index)}
+                                                                disabled={isGenerating}
+                                                                className={`text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 transition-colors ${isGenerating && assistantAction === "clean" && activeFaqIndex === index ? 'text-blue-600' : 'text-slate-400 hover:text-blue-600'}`}
+                                                            >
+                                                                <Icon name={isGenerating && assistantAction === "clean" && activeFaqIndex === index ? "loader-2" : "shield-off"} className={`w-3 h-3 ${isGenerating && assistantAction === "clean" && activeFaqIndex === index ? 'animate-spin' : ''}`} /> Clean Promo
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                    <button 
+                                                        onClick={() => removeFaq(index)}
+                                                        className="p-2 text-slate-300 hover:text-red-500 transition-colors"
+                                                    >
+                                                        <Icon name="trash-2" className="w-5 h-5" />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                        <div ref={faqListEndRef} />
+                                    </div>
+
+                                    <div className="pt-6 flex justify-between">
+                                        <Button variant="secondary" onClick={() => setStep(1)}>Back to Context</Button>
+                                        <Button onClick={() => setStep(3)}>Validate & Review</Button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Step 3: Validation & Checklist */}
+                            {step === 3 && (
+                                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                    <div className="glass-card rounded-2xl p-8 space-y-6">
+                                        <h2 className="text-2xl font-bold">Validation & Best Practices</h2>
+                                        
+                                        <div className="space-y-4">
+                                            <h3 className="font-bold text-slate-700 flex items-center gap-2">
+                                                <Icon name="alert-circle" className="text-blue-500" />
+                                                Automated Checks
+                                            </h3>
+                                            {validations.length === 0 ? (
+                                                <div className="p-4 bg-green-50 border border-green-100 rounded-xl flex items-center gap-3 text-green-700">
+                                                    <Icon name="check-circle" />
+                                                    <span className="text-sm font-medium">All automated checks passed! Your FAQs look search-ready.</span>
+                                                </div>
+                                            ) : (
+                                                <div className="space-y-2">
+                                                    {validations.map((v, i) => (
+                                                        <div key={i} className={`p-3 rounded-lg flex items-start gap-3 text-sm ${v.type === 'error' ? 'bg-red-50 text-red-700 border border-red-100' : 'bg-amber-50 text-amber-700 border border-amber-100'}`}>
+                                                            <Icon name={v.type === 'error' ? 'x-circle' : 'alert-triangle'} className="w-4 h-4 mt-0.5" />
+                                                            <span>{v.msg}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="p-4 bg-blue-50 rounded-xl border border-blue-100">
+                                            <p className="text-xs text-blue-800 leading-relaxed">
+                                                <strong>Important Note:</strong> Structured data helps search engines understand your content, but Google does not guarantee rich results. Currently, FAQ rich results are primarily shown for authoritative government and health sites.
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex justify-between">
+                                        <Button variant="secondary" onClick={() => setStep(2)}>Back to Editor</Button>
+                                        <Button onClick={() => setStep(4)}>Generate Export</Button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Step 4: Export */}
+                            {step === 4 && (
+                                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                    <div className="glass-card rounded-2xl p-8 space-y-8">
+                                        <div className="flex items-center justify-between">
+                                            <h2 className="text-2xl font-bold">Final Export</h2>
+                                            <div className="flex gap-2">
+                                                <Button variant="secondary" onClick={() => downloadFile(generateHtml() + "\n\n" + generateJsonLd(), "faq-export.html", "text/html")} className="text-xs">
+                                                    <Icon name="download" className="w-3 h-3" /> Download All
+                                                </Button>
+                                            </div>
+                                        </div>
+
+                                        {/* Export Options */}
+                                        <div className="space-y-8">
+                                            {/* Visible HTML Only */}
+                                            <div className="space-y-3">
+                                                <div className="flex items-center justify-between">
+                                                    <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider">Visible HTML Only</h3>
+                                                    <Button variant="ghost" onClick={() => copyToClipboard(generateHtml())} className="text-xs h-8">Copy</Button>
+                                                </div>
+                                                <pre className="p-4 bg-slate-900 text-slate-300 rounded-xl text-xs overflow-x-auto mono max-h-40">
+                                                    {generateHtml()}
+                                                </pre>
+                                            </div>
+
+                                            {/* JSON-LD Only */}
+                                            <div className="space-y-3">
+                                                <div className="flex items-center justify-between">
+                                                    <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider">JSON-LD Only</h3>
+                                                    <Button variant="ghost" onClick={() => copyToClipboard(generateJsonLd())} className="text-xs h-8">Copy</Button>
+                                                </div>
+                                                <pre className="p-4 bg-slate-900 text-slate-300 rounded-xl text-xs overflow-x-auto mono max-h-40">
+                                                    {generateJsonLd()}
+                                                </pre>
+                                            </div>
+                                        </div>
+
+                                        {/* Publishing Instructions */}
+                                        <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 space-y-4">
+                                            <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                                                <Icon name="book-open" className="text-blue-600" />
+                                                Publishing Instructions
+                                            </h3>
+                                            <p className="text-sm text-slate-600 leading-relaxed">
+                                                Paste the visible FAQ HTML into the main content area of your page (usually near the bottom). 
+                                                Place the JSON-LD script block in your page's <code>&lt;head&gt;</code> section, or at the very bottom of the <code>&lt;body&gt;</code> if your CMS restricts header access. 
+                                                Ensure the visible text on the page exactly matches the text in the script. 
+                                                Before going live, test your URL in the <strong>Google Rich Results Test</strong> tool. 
+                                                Once published, you can request a re-crawl in Google Search Console to speed up discovery.
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex justify-between">
+                                        <Button variant="secondary" onClick={() => setStep(3)}>Back to Review</Button>
+                                        <Button variant="ghost" onClick={() => window.location.reload()}>Start New FAQ</Button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Right Column: Guidance & Preview */}
+                        <div className="lg:col-span-4 space-y-6">
+                            
+                            {/* Live Preview */}
+                            <div className="glass-card rounded-2xl p-6 sticky top-24">
+                                <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                                    <Icon name="eye" className="text-blue-500" />
+                                    Live Preview
+                                </h3>
+                                <div className="bg-white border rounded-xl p-4 min-h-[200px] max-h-[400px] overflow-y-auto prose prose-slate prose-sm">
+                                    <h2 className="text-base font-bold mb-4">Frequently Asked Questions</h2>
+                                    {faqs.some(f => f.q || f.a) ? (
+                                        <div className="space-y-4">
+                                            {faqs.map((f, i) => (f.q || f.a) && (
+                                                <div key={i} className="border-b pb-3 last:border-0">
+                                                    <h3 className="font-bold text-slate-900 text-sm mb-1">{f.q || "Untitled Question"}</h3>
+                                                    <p className="text-slate-600 text-xs leading-relaxed">{f.a || "Awaiting answer..."}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="flex flex-col items-center justify-center h-40 text-slate-300">
+                                            <Icon name="ghost" className="w-10 h-10 mb-2" />
+                                            <p className="text-xs">No content yet</p>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="mt-6 space-y-4">
+                                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Writing Guidance</h4>
+                                    <ul className="space-y-3">
+                                        <li className="flex gap-2 text-xs text-slate-600">
+                                            <Icon name="check" className="text-green-500 w-3 h-3 mt-0.5 shrink-0" />
+                                            <span>Keep questions under 100 characters.</span>
+                                        </li>
+                                        <li className="flex gap-2 text-xs text-slate-600">
+                                            <Icon name="check" className="text-green-500 w-3 h-3 mt-0.5 shrink-0" />
+                                            <span>Answers should be 2-3 sentences max.</span>
+                                        </li>
+                                        <li className="flex gap-2 text-xs text-slate-600">
+                                            <Icon name="check" className="text-green-500 w-3 h-3 mt-0.5 shrink-0" />
+                                            <span>Use natural language your customers use.</span>
+                                        </li>
+                                        <li className="flex gap-2 text-xs text-slate-600">
+                                            <Icon name="x" className="text-red-400 w-3 h-3 mt-0.5 shrink-0" />
+                                            <span>Avoid "Best", "Top", or marketing fluff.</span>
+                                        </li>
+                                    </ul>
+                                </div>
+                            </div>
+
+                        </div>
+                    </main>
+
+                    {/* Footer */}
+                    <footer className="p-8 text-center text-slate-400 text-xs border-t mt-12">
+                        <p>&copy; 2026 FAQ Architect. Built for high-performance SEO.</p>
+                        <p className="mt-1">Follows Google FAQPage Structured Data Guidelines.</p>
+                    </footer>
+                </div>
+                </ErrorBoundary>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
